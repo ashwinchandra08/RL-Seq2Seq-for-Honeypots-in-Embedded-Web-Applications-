@@ -3,6 +3,7 @@ import socket
 import os
 import requests
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 # Load credentials from .env file
 load_dotenv()
@@ -21,13 +22,27 @@ def is_ip_reachable(ip, port=80, timeout=7):
         url = f"http://{ip}"
         response = requests.get(url, timeout=timeout)
         
-        if response.status_code == 502 or response.status_code==404:
+        if response.status_code in [502, 404]:
             print(f"IP {ip} returned 502 Bad Gateway or 404.")
             return False
-        return True
-        
+        return response
     except (socket.timeout, ConnectionRefusedError, OSError, requests.RequestException) as e:
         print(f"Unreachable IP: {ip}, Error: {e}")
+        return False
+
+def has_input_fields(response):
+    """Check if the web page has input fields, indicating a form page."""
+    try:
+        soup = BeautifulSoup(response.text, 'html.parser')
+        input_fields = soup.find_all('input')
+        if input_fields:
+            print(f"Input fields found: {len(input_fields)}")
+            return True
+        else:
+            print("No input fields found.")
+            return False
+    except Exception as e:
+        print(f"Error parsing HTML: {e}")
         return False
 
 def fetch_reachable_ips(query='http'):
@@ -37,11 +52,13 @@ def fetch_reachable_ips(query='http'):
         reachable_ips = []
         for result in results['matches']:
             ip = result.get('ip_str')
-            if ip and is_ip_reachable(ip):
-                reachable_ips.append(ip)
-                print(f"Reachable IP found: {ip}")
-            else:
-                print(f"Unreachable or filtered IP: {ip}")
+            if ip:
+                response = is_ip_reachable(ip)
+                if response and has_input_fields(response):
+                    reachable_ips.append(ip)
+                    print(f"Reachable IP with input fields found: {ip}")
+                else:
+                    print(f"Unreachable or no input fields found for IP: {ip}")
         return reachable_ips
     except shodan.APIError as e:
         print(f"Shodan API error: {e}")

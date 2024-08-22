@@ -84,20 +84,28 @@ def decode_safe(data):
         print("Unsupported data type")
         return "<UNSUPPORTED_TYPE>"
 
+import json
 
 def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_status, res_headers, res_body):
     """Save request and response data to the database."""
     try:
+        # Convert dictionaries to JSON strings
+        req_body_json = json.dumps(req_body) if isinstance(req_body, dict) else req_body
+        res_body_json = json.dumps(res_body) if isinstance(res_body, dict) else res_body
+        
+        # Prepare and execute the SQL statements
         sql_rsp = 'INSERT INTO http_response (status, headers, body) VALUES (%s, %s, %s)'
-        c_rsp.execute(sql_rsp, (res_status, res_headers, res_body))
+        c_rsp.execute(sql_rsp, (res_status, res_headers, res_body_json))
         res_id = c_rsp.lastrowid
         
         sql_req = 'INSERT INTO request_data (method, path, query, headers, body, res_id) VALUES (%s, %s, %s, %s, %s, %s)'
-        c_lrn.execute(sql_req, (req_method, req_path, req_query, req_headers, req_body, res_id))
+        c_lrn.execute(sql_req, (req_method, req_path, req_query, req_headers, req_body_json, res_id))
         
+        # Commit the transaction
         db_connection.commit()
     except Exception as e:
         print(f"Failed to save to DB: {e}")
+
 
 def get_internal_links(driver, base_url):
     """Extract all internal links from the current page."""
@@ -129,11 +137,13 @@ def crawl_by_selenium(url, driver, visited_urls):
     # Fuzz input fields and submit form
     input_fields = driver.find_elements(By.TAG_NAME, "input")
     form_data = {}
+    form_found = False
     
     for field in input_fields:
         try:
             field_name = field.get_attribute('name')
             if field_name:
+                form_found = True
                 fuzz_input = fuzz_parameters()
                 form_data[field_name] = fuzz_input
                 field.send_keys(fuzz_input)
@@ -142,14 +152,18 @@ def crawl_by_selenium(url, driver, visited_urls):
             print(f"Fuzzing error: {e}")
 
     # Find and submit the form
-    try:
-        forms = driver.find_elements(By.TAG_NAME, "form")
-        if forms:
-            form = forms[0]
-            form.submit()  # Submit the first form found on the page
-            print(f"[*] Submitted form with fuzzed data: {form_data}")
-    except Exception as e:
-        print(f"Form submission error: {e}")
+    if form_found:
+        try:
+            forms = driver.find_elements(By.TAG_NAME, "form")
+            if forms:
+                form = forms[0]
+                form.submit()  # Submit the first form found on the page
+                print(f"[*] Submitted form with fuzzed data: {form_data}")
+        except Exception as e:
+            print(f"Form submission error: {e}")
+    else:
+        # No form found, so set form_data accordingly
+        form_data = "form did not exist on page"
 
     # Apply fuzzing headers using JavaScript
     apply_fuzzing_headers(driver)
@@ -161,7 +175,8 @@ def crawl_by_selenium(url, driver, visited_urls):
             req_path = request.path
             req_query = request.querystring if request.querystring else "<EMP>"
             req_headers = decode_safe(str(request.headers))
-            req_body = decode_safe(request.body) if request.body else "<EMP>"
+            req_body = decode_safe(request.body) if request.body else form_data
+            print(f"Request Body: {req_body}") 
 
             try:
                 res_status = int(request.response.status_code)
@@ -181,13 +196,12 @@ def crawl_by_selenium(url, driver, visited_urls):
         crawl_by_selenium(link, driver, visited_urls)
 
 
-
 def main():
     options = Options()
     options.headless = True
     service = Service(driver_path)
     driver = webdriver.Chrome(service=service, options=options)
-    
+    '''
     # Clear the database tables before new entries
     sql_main = 'DELETE from request_data'
     c_main.execute(sql_main)
@@ -196,6 +210,7 @@ def main():
     sql_main = 'DELETE from http_response'
     c_main.execute(sql_main)
     db_connection.commit()
+    '''
 
     start_time = time.time()
 
