@@ -1,0 +1,83 @@
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.optimizers import Adam
+
+
+state_size = 4  
+action_size = 3  
+learning_rate = 0.001
+gamma = 0.95  
+
+# Build the Q-Network
+def build_model(state_size, action_size):
+    model = Sequential()
+    model.add(Dense(24, input_dim=state_size, activation='relu'))
+    model.add(Dense(24, activation='relu'))
+    model.add(Dense(action_size, activation='linear'))
+    model.compile(loss='mse', optimizer=Adam(learning_rate=learning_rate))
+    return model
+
+
+model = build_model(state_size, action_size)
+
+
+def choose_action(state, epsilon):
+    if np.random.rand() <= epsilon:
+        return np.random.choice(action_size)  
+    q_values = model.predict(state)
+    return np.argmax(q_values[0])  
+
+
+def train_model(state, action, reward, next_state, done):
+    target = reward
+    if not done:
+        target = (reward + gamma * np.amax(model.predict(next_state)[0]))
+    
+    target_f = model.predict(state)
+    target_f[0][action] = target
+    
+    model.fit(state, target_f, epochs=1, verbose=0)
+
+
+states = np.array([
+    [1, 0, 0, 1],  
+    [0, 1, 1, 0],  
+    [1, 1, 0, 0],  
+    [0, 0, 1, 1]   
+])
+
+
+epsilon = 1.0  
+epsilon_decay = 0.995
+epsilon_min = 0.01
+episodes = 50
+
+for e in range(episodes):
+    state = np.reshape(states[np.random.choice(len(states))], [1, state_size])
+    done = False
+    
+    while not done:
+        action = choose_action(state, epsilon)
+        
+        
+        next_state = np.reshape(states[np.random.choice(len(states))], [1, state_size])
+        reward = np.random.rand() #Reward is randomly generated here, in the actual implementation we will assign rewards specifically
+        done = np.random.rand() > 0.95  
+        
+        train_model(state, action, reward, next_state, done)
+        
+        state = next_state
+        
+        if done:
+            print(f"Episode {e+1}/{episodes} finished")
+            break
+    
+    if epsilon > epsilon_min:
+        epsilon *= epsilon_decay
+
+
+test_state = np.array([[1, 0, 1, 0]])  
+predicted_action = choose_action(test_state, epsilon=0.0)  
+print(f"Predicted action for state {test_state}: {predicted_action}")
