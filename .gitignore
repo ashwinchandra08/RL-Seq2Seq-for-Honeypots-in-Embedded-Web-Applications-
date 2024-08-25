@@ -1,4 +1,11 @@
+<<<<<<< HEAD
 SHODAN_API_KEY=RdwE5vxVySknALjej0PTYdloLIdMWRsw
 MYSQL_PASSWORD=ananya123
 CHROMEDRIVER_PATH=/Users/ananya/.wdm/drivers/chromedriver/mac64/127.0.6533.88/chromedriver
 
+=======
+#Environment Variables 
+*.env 
+>>>>>>> ff7e2e679355e56a60fa6a8362b13b15c7d7c282
+# Ignore environment variable files
+.env
