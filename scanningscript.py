@@ -57,7 +57,6 @@ def apply_fuzzing_headers(driver):
     headers = fuzz_headers()
     for header_name, header_value in headers.items():
         try:
-            # Ensure correct JavaScript syntax
             js_code = f"""
             var xhr = new XMLHttpRequest();
             xhr.open('POST', window.location.href, true);
@@ -68,7 +67,6 @@ def apply_fuzzing_headers(driver):
             time.sleep(3)
         except Exception as e:
             print(f"Header fuzzing error: {e}")
-
 
 def decode_safe(data):
     """Safely decode data if it's in bytes, otherwise return it as is."""
@@ -89,11 +87,9 @@ import json
 def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_status, res_headers, res_body):
     """Save request and response data to the database."""
     try:
-        # Convert dictionaries to JSON strings
         req_body_json = json.dumps(req_body) if isinstance(req_body, dict) else req_body
         res_body_json = json.dumps(res_body) if isinstance(res_body, dict) else res_body
         
-        # Prepare and execute the SQL statements
         sql_rsp = 'INSERT INTO http_response (status, headers, body) VALUES (%s, %s, %s)'
         c_rsp.execute(sql_rsp, (res_status, res_headers, res_body_json))
         res_id = c_rsp.lastrowid
@@ -101,11 +97,9 @@ def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_statu
         sql_req = 'INSERT INTO request_data (method, path, query, headers, body, res_id) VALUES (%s, %s, %s, %s, %s, %s)'
         c_lrn.execute(sql_req, (req_method, req_path, req_query, req_headers, req_body_json, res_id))
         
-        # Commit the transaction
         db_connection.commit()
     except Exception as e:
         print(f"Failed to save to DB: {e}")
-
 
 def get_internal_links(driver, base_url):
     """Extract all internal links from the current page."""
@@ -128,10 +122,12 @@ def crawl_by_selenium(url, driver, visited_urls):
     visited_urls.add(url)
     
     try:
+        # Set a timeout for the page load
+        driver.set_page_load_timeout(10)  # Timeout in seconds
         driver.get(url)
         time.sleep(10)  # Wait for the page to load completely
     except Exception as e:
-        print(f"Error loading page: {e}")
+        print(f"Error loading page or timeout occurred: {e}")
         return
 
     # Fuzz input fields and submit form
@@ -151,7 +147,6 @@ def crawl_by_selenium(url, driver, visited_urls):
         except Exception as e:
             print(f"Fuzzing error: {e}")
 
-    # Find and submit the form
     if form_found:
         try:
             forms = driver.find_elements(By.TAG_NAME, "form")
@@ -162,13 +157,10 @@ def crawl_by_selenium(url, driver, visited_urls):
         except Exception as e:
             print(f"Form submission error: {e}")
     else:
-        # No form found, so set form_data accordingly
         form_data = "form did not exist on page"
 
-    # Apply fuzzing headers using JavaScript
     apply_fuzzing_headers(driver)
 
-    # Log the requests and responses
     for request in driver.requests:
         if url in request.url:
             req_method = request.method
@@ -182,7 +174,6 @@ def crawl_by_selenium(url, driver, visited_urls):
                 res_status = int(request.response.status_code)
                 res_headers = decode_safe(str(request.response.headers))
                 res_body = decode_safe(request.response.body)
-
             except:
                 res_status = 400
                 res_headers = "<ERROR>"
@@ -190,42 +181,38 @@ def crawl_by_selenium(url, driver, visited_urls):
 
             save_to_db(req_method, req_path, req_query, req_headers, req_body, res_status, res_headers, res_body)
 
-    # Extract all internal links and crawl them recursively
     internal_links = get_internal_links(driver, url)
     for link in internal_links:
         crawl_by_selenium(link, driver, visited_urls)
 
+def generate_random_ip():
+    """Generate a random valid IP address."""
+    return f"{random.randint(1, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 255)}"
 
 def main():
     options = Options()
     options.headless = True
     service = Service(driver_path)
-    driver = webdriver.Chrome(service=service, options=options)
-    '''
-    # Clear the database tables before new entries
-    sql_main = 'DELETE from request_data'
-    c_main.execute(sql_main)
-    db_connection.commit()
+
+    max_attempts = 100  # Define how many IPs you want to test
     
-    sql_main = 'DELETE from http_response'
-    c_main.execute(sql_main)
-    db_connection.commit()
-    '''
+    for _ in range(max_attempts):
+        random_ip = generate_random_ip()
+        url = f"http://{random_ip}"
+        
+        driver = webdriver.Chrome(service=service, options=options)
+        visited_urls = set()
 
-    start_time = time.time()
+        try:
+            crawl_by_selenium(url, driver, visited_urls)
+        except Exception as e:
+            print(f"Error while crawling {url}: {e}")
+        finally:
+            driver.quit()  # Ensure the browser is closed before moving on
 
-    visited_urls = set()  # To keep track of visited URLs
+        # Wait a bit before starting the next attempt (optional)
+        time.sleep(2)
     
-    with open('reachable_ips.txt', 'r') as file:
-        ip_addresses = file.readlines()
-
-    for ip in ip_addresses:
-        url = f"http://{ip.strip()}"
-        crawl_by_selenium(url, driver, visited_urls)
-
-    driver.quit()
-    print("[*] Crawling Time:", time.time() - start_time)
-
     c_lrn.close()
     c_rsp.close()
     db_connection.close()
