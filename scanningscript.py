@@ -15,6 +15,9 @@ import json
 # Load credentials from .env file
 load_dotenv()
 
+lock = threading.Lock()
+
+
 # MySQL database connection
 db_connection = mysql.connector.connect(
     host='127.0.0.1',
@@ -25,6 +28,8 @@ db_connection = mysql.connector.connect(
 c_rsp = db_connection.cursor()
 c_lrn = db_connection.cursor()
 c_main = db_connection.cursor()
+
+
 
 # Selenium WebDriver path
 driver_path = os.getenv('CHROMEDRIVER_PATH')
@@ -84,7 +89,7 @@ def decode_safe(data):
         print("Unsupported data type")
         return "<UNSUPPORTED_TYPE>"
 
-import json
+
 
 def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_status, res_headers, res_body):
     """Save request and response data to the database."""
@@ -92,6 +97,13 @@ def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_statu
     lock.acquire()
 
     global id_counter
+    # Get response_id and set id_counter (id_counter = max(res_id) + 1)
+    try:
+        c_lrn.execute('SELECT MAX(res_id) FROM http_response')
+        id_counter = c_lrn.fetchall()[0][0] + 1
+    except:
+        id_counter = 1
+
 
     try:
         # Convert bytes to strings
@@ -106,15 +118,18 @@ def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_statu
 
         # Handle response body processing
         try:
-            if "html" in res_body.decode('utf-8', errors='ignore'):
-                res_body = res_body.decode('utf-8')
-                res_body = res_body.encode()
+            if isinstance(res_body, bytes):
+                if "html" in res_body.decode('utf-8', errors='ignore'):
+                    res_body = res_body.decode('utf-8')
+                    res_body = res_body.encode()
+                    
         except Exception as e:
             print(f"Error processing response body: {e}")
 
         # Convert dictionaries to JSON strings
         req_body_json = json.dumps(req_body) if isinstance(req_body, dict) else req_body
         res_body_json = json.dumps(res_body) if isinstance(res_body, dict) else res_body
+
 
         # Check if there is a matching response in the response table
         c_rsp.execute('SELECT res_id FROM http_response WHERE status = %s AND headers = %s AND body = %s', (res_status, res_headers, res_body_json))
@@ -123,12 +138,12 @@ def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_statu
         if result:
             res_id = result[0][0]
         else:
-            # Save a new response to the response table
-            sql_rsp = 'INSERT INTO http_response (status, headers, body) VALUES (%s, %s, %s)'
-            c_rsp.execute(sql_rsp, (res_status, res_headers, res_body_json))
-            res_id = c_rsp.lastrowid
+            # Save a new response to the response table using id_counter
+            sql_rsp = 'INSERT INTO http_response (res_id, status, headers, body) VALUES (%s, %s, %s, %s)'
+            c_rsp.execute(sql_rsp, (id_counter, res_status, res_headers, res_body_json))
+            res_id = id_counter
 
-            id_counter += 1 # increase response_id
+            id_counter += 1  # Increase response_id
 
         # Save the request to the request_data table with the response_id
         sql_req = 'INSERT INTO request_data (method, path, query, headers, body, res_id) VALUES (%s, %s, %s, %s, %s, %s)'
@@ -256,14 +271,7 @@ def main():
         # Wait a bit before starting the next attempt (optional)
         time.sleep(2)
         # Thread Exclusion control
-    lock = threading.Lock()
-
-    # Get response_id and set id_counter (id_counter = max(res_id) + 1)
-    try:
-        c_lrn.execute('SELECT MAX(res_id) FROM http_response')
-        id_counter = c_lrn.fetchall()[0][0] + 1
-    except:
-        id_counter = 1
+    
     
     c_lrn.close()
     c_rsp.close()
