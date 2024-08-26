@@ -116,13 +116,19 @@ def save_to_db(req_method, req_path, req_query, req_headers, req_body, res_statu
         req_headers = req_headers.replace(" ", "#")
         req_body = req_body.replace(" ", "#")
 
+        # Check if request body contains "form#did#not#exist#on#page"
+        if "form#did#not#exist#on#page" in req_body:
+            print("Skipping request with body: form#did#not#exist#on#page")
+            return  # Skip further processing and database insertion
+
+
         # Handle response body processing
         try:
             if isinstance(res_body, bytes):
                 if "html" in res_body.decode('utf-8', errors='ignore'):
                     res_body = res_body.decode('utf-8')
                     res_body = res_body.encode()
-                    
+
         except Exception as e:
             print(f"Error processing response body: {e}")
 
