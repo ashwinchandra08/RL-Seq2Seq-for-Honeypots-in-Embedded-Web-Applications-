@@ -34,7 +34,7 @@ c_main = db_connection.cursor()
 # Selenium WebDriver path
 driver_path = os.getenv('CHROMEDRIVER_PATH')
 
-def fuzz_parameters():
+def fuzz_parameters(i):
     """Generate unique SQL and command injection payloads."""
     fuzz_inputs = [
         "admin'--",  # SQL injection
@@ -48,7 +48,7 @@ def fuzz_parameters():
         "'; exec master..xp_cmdshell('ping 127.0.0.1'); --",  # Command injection
         "' UNION SELECT NULL, NULL; --"  # SQL injection (union-based)
     ]
-    return random.choice(fuzz_inputs)
+    return fuzz_inputs[i]
 
 def fuzz_headers():
     """Generate unique SQL and command injection payloads for headers."""
@@ -204,16 +204,18 @@ def crawl_by_selenium(url, driver, visited_urls):
     input_fields = driver.find_elements(By.TAG_NAME, "input")
     form_data = {}
     form_found = False
-    
+    # Iterate over each input field
     for field in input_fields:
         try:
-            field_name = field.get_attribute('name')
-            if field_name:
-                form_found = True
-                fuzz_input = fuzz_parameters()
-                form_data[field_name] = fuzz_input
-                field.send_keys(fuzz_input)
-                ActionChains(driver).send_keys_to_element(field, fuzz_input).perform()
+            #and get the placeholder value
+            field_placeholder = field.get_attribute('placeholder')
+            if field_placeholder == "Username" or field_placeholder == "Password":
+                form_found = True 
+                for i in range(10):
+                    fuzz_input = fuzz_parameters(i)
+                    field.clear()
+                    ActionChains(driver).send_keys_to_element(field, fuzz_input).perform()
+                    
         except Exception as e:
             print(f"Fuzzing error: {e}")
 
