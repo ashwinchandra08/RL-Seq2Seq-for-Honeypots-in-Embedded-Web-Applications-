@@ -65,6 +65,24 @@ def find_login_elements(driver):
             pass
     return None, None
 
+def find_internal_links(driver, base_url):
+    links = driver.find_elements(By.TAG_NAME, 'a')
+    internal_links = []
+    for link in links:
+        href = link.get_attribute('href')
+        if href and urlparse(href).netloc == urlparse(base_url).netloc:
+            internal_links.append(href)
+    return internal_links
+
+def navigate_to_login_page(driver, base_url):
+    internal_links = find_internal_links(driver, base_url)
+    for link in internal_links:
+        driver.get(link)
+        username_field, password_field = find_login_elements(driver)
+        if username_field and password_field:
+            return username_field, password_field
+    return None, None
+
 def save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body):
     """Save request and response data to the database."""
     global id_counter
@@ -143,17 +161,6 @@ def capture_network_traffic(driver):
                     post_requests[response_url]['response']['body'] = response_body.get('body', '')
                     print(f"Captured response body for {response_url}: {post_requests[response_url]['response']['body']}")
 
-                    # Save to database
-                    req_method = request_method
-                    req_path = urlparse(request_url).path
-                    req_headers = log['params']['request'].get('headers', {})
-                    req_body = post_requests[response_url]['data']
-                    res_status = response_status
-                    res_headers = log['params']['response'].get('headers', {})
-                    res_body = post_requests[response_url]['response']['body']
-
-                    save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
-                    
         except KeyError as e:
             print(f"KeyError: {e} - Entry: {log}")
     for url, data in post_requests.items():
@@ -163,6 +170,18 @@ def capture_network_traffic(driver):
             print(f"Response body: {data['response']['body']}")
         else:
             print("Response body: No data captured")
+        
+        # Extract parameters for save_to_db
+    req_method = 'POST'
+    req_path = urlparse(url).path
+    req_headers = {}  # Assuming headers are not captured in this snippet
+    req_body = data['data']
+    res_status = data['response']['status']
+    res_headers = {}  # Assuming headers are not captured in this snippet
+    res_body = data['response']['body']
+
+    # Call save_to_db
+    save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
 
 # Load IPs from a file
 def load_ips_from_file(filename):
@@ -183,6 +202,10 @@ for ip in ip_list:
 
         # Find login elements dynamically
         username_field, password_field = find_login_elements(driver)
+        # If login elements are not found, look for links to a login page
+        if not username_field or not password_field:
+            username_field, password_field = navigate_to_login_page(driver, target_url)
+
         if username_field and password_field:
             # Enter credentials
             username_field.send_keys('your_username')  # Replace with actual username
