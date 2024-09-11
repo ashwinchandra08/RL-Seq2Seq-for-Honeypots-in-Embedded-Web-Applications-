@@ -23,7 +23,7 @@ db_connection = mysql.connector.connect(
     host='127.0.0.1',
     user='root',
     password=os.getenv('MYSQL_PASSWORD'),
-    database='pes'
+    database='honeypotdb'
 )
 
 #Create a cursor object using the cursor() method
@@ -223,18 +223,24 @@ def load_ips_from_file(filename):
 
 # Visit each IP from the .txt file
 ip_list = load_ips_from_file('reachable_ips.txt')  # Make sure to replace with the actual path of your IP file
-import random
+# Function to generate a list of sequential IP addresses and store them in a set
 
-# Function to generate a random IP address
-def generate_random_ip():
-    return f"{random.randint(1, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}"
-
-# Function to generate a list of random IP addresses
 def generate_ip_list(count):
-    return [generate_random_ip() for _ in range(count)]
+    ip_set = set()
+    start_ip = (128 << 24)  # Start from 128.0.0.0
+    for i in range(start_ip, start_ip + count):
+        # Calculate each octet
+        octet1 = (i >> 24) & 0xFF
+        octet2 = (i >> 16) & 0xFF
+        octet3 = (i >> 8) & 0xFF
+        octet4 = i & 0xFF
+        ip_set.add(f"{octet1}.{octet2}.{octet3}.{octet4}")
+    return ip_set
 
-# Generate a list of 10 random IP addresses (you can adjust the count)
-ip_list = generate_ip_list(10)
+# Generate a set of 10 sequential IP addresses (you can adjust the count)
+ip_set = generate_ip_list(500)
+ip_list = list(ip_set)
+
 for ip in ip_list:
     target_url = f"http://{ip}"  # Access each IP over HTTP
 
@@ -275,6 +281,7 @@ for ip in ip_list:
             print("Login elements not found.")
     except Exception as e:
         print(f"Failed to load {target_url}: {e}")
+        continue  # Move on to the next IP address
 
 # Close the browser
 driver.quit()
