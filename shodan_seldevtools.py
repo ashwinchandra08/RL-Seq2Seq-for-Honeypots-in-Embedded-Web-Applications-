@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 import os
 import mysql.connector
 from urllib.parse import urlparse
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 #Load Credentials from .env 
 load_dotenv()
@@ -21,7 +23,7 @@ db_connection = mysql.connector.connect(
     host='127.0.0.1',
     user='root',
     password=os.getenv('MYSQL_PASSWORD'),
-    database='honeypotdb'
+    database='pes'
 )
 
 #Create a cursor object using the cursor() method
@@ -50,7 +52,9 @@ def find_login_elements(driver):
         {'username': (By.NAME, 'username'), 'password': (By.NAME, 'password')},
         {'username': (By.ID, 'username'), 'password': (By.ID, 'password')},
         {'username': (By.CSS_SELECTOR, 'input[name="username"]'), 'password': (By.CSS_SELECTOR, 'input[name="password"]')},
+        {'username': (By.CSS_SELECTOR, 'input[type="text"]'), 'password': (By.CSS_SELECTOR, 'input[type="password"]')},
         {'username': (By.XPATH, '//input[@name="username"]'), 'password': (By.XPATH, '//input[@name="password"]')},
+        {'username': (By.XPATH, '//input[@placeholder="Enter your username"]'), 'password': (By.XPATH, '//input[@type="password"]')},
         {'username': (By.XPATH, '//input[@placeholder="username"]'), 'password': (By.XPATH, '//input[@placeholder="password"]')},
         {'username': (By.XPATH, '//input[@placeholder="Username"]'), 'password': (By.XPATH, '//input[@placeholder="Password"]')}
     ]
@@ -137,36 +141,58 @@ def save_to_db(req_method, req_path, req_headers, req_body, res_status, res_head
 def capture_network_traffic(driver):
     logs = driver.get_log('performance')
     post_requests = {}
+    
     for entry in logs:
         log = json.loads(entry['message'])['message']
         try:
             if log['method'] == 'Network.requestWillBeSent':
                 request_url = log['params']['request']['url']
                 request_method = log['params']['request']['method']
+                request_headers = log['params']['request'].get('headers', {})
+                post_data = log['params']['request'].get('postData', '')
+                
                 if request_method == 'POST':
-                    post_data = log['params']['request'].get('postData', '')
-                    post_requests[request_url] = {'data': post_data, 'response': {'status': None, 'body': '', 'requestId': None}}
+                    post_requests[log['params']['requestId']] = {
+                        'url': request_url,
+                        'headers': request_headers,
+                        'data': post_data,
+                        'response': {'status': None, 'body': '', 'headers': {}}
+                    }
                     print(f"Captured POST request: {request_url}")
+                    print(f"Request headers: {request_headers}")
                     print(f"POST data: {post_data}")
 
             elif log['method'] == 'Network.responseReceived':
-                response_url = log['params']['response']['url']
-                response_status = log['params']['response']['status']
                 request_id = log['params']['requestId']
-                if response_url in post_requests:
-                    post_requests[response_url]['response']['status'] = response_status
-                    post_requests[response_url]['response']['requestId'] = request_id
-                    print(f"Captured HTTP response (POST): {response_url}")
+                response_status = log['params']['response'].get('status', None)
+                response_headers = log['params']['response'].get('headers', {})
+                
+                if request_id in post_requests:
+                    post_requests[request_id]['response']['status'] = response_status
+                    post_requests[request_id]['response']['headers'] = response_headers
+                    print(f"Captured HTTP response (POST): {post_requests[request_id]['url']}")
                     print(f"Response status: {response_status}")
-                    response_body = driver.execute_cdp_cmd('Network.getResponseBody', {'requestId': request_id})
-                    post_requests[response_url]['response']['body'] = response_body.get('body', '')
-                    print(f"Captured response body for {response_url}: {post_requests[response_url]['response']['body']}")
+                    print(f"Response headers: {response_headers}")
+
+                    # Capture response body
+                    try:
+                        response_body = driver.execute_cdp_cmd('Network.getResponseBody', {'requestId': request_id})
+                        post_requests[request_id]['response']['body'] = response_body.get('body', '')
+                        if response_body.get('body') != '':
+                            print(f"Captured response body for {post_requests[request_id]['url']}: {post_requests[request_id]['response']['body']}")
+                    except Exception as e:
+                        print(f"Failed to get response body: {e}")
 
         except KeyError as e:
             print(f"KeyError: {e} - Entry: {log}")
-    for url, data in post_requests.items():
+
+    for request_id, data in post_requests.items():
+        url = data['url']
         print(f"\nFinal data for POST request to {url}:")
+        print(f"Request headers: {data['headers']}")
         print(f"Request data: {data['data']}")
+        print(f"Response status: {data['response']['status']}")
+        print(f"Response headers: {data['response']['headers']}")
         if data['response']['body']:
             print(f"Response body: {data['response']['body']}")
         else:
@@ -175,14 +201,19 @@ def capture_network_traffic(driver):
         # Extract parameters for save_to_db
         req_method = 'POST'
         req_path = urlparse(url).path
-        req_headers = {}  # Assuming headers are not captured in this snippet
+        req_headers = data['headers']
         req_body = data['data']
         res_status = data['response']['status']
-        res_headers = {}  # Assuming headers are not captured in this snippet
+        res_headers = data['response']['headers']
         res_body = data['response']['body']
+        
+        # Save to database
+        save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
+
+
 
         # Call save_to_db
-        save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
+        #save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
 
 # Load IPs from a file
 def load_ips_from_file(filename):
@@ -192,9 +223,20 @@ def load_ips_from_file(filename):
 
 # Visit each IP from the .txt file
 ip_list = load_ips_from_file('reachable_ips.txt')  # Make sure to replace with the actual path of your IP file
+import random
 
+# Function to generate a random IP address
+def generate_random_ip():
+    return f"{random.randint(1, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(0, 255)}"
+
+# Function to generate a list of random IP addresses
+def generate_ip_list(count):
+    return [generate_random_ip() for _ in range(count)]
+
+# Generate a list of 10 random IP addresses (you can adjust the count)
+ip_list = generate_ip_list(10)
 for ip in ip_list:
-    target_url = f"https://www.hackthissite.org/user/login"  # Access each IP over HTTP
+    target_url = f"http://{ip}"  # Access each IP over HTTP
 
     print(f"Visiting: {target_url}")
     try:
@@ -211,10 +253,17 @@ for ip in ip_list:
             # Enter credentials
             username_field.send_keys('your_username')  # Replace with actual username
             password_field.send_keys('your_password')  # Replace with actual password
-
+            buttons = driver.find_elements(By.XPATH, '//button | //input[@type="submit"]')
+            for button in buttons:
+                outer_html = button.get_attribute('outerHTML')
+                print(f"Button outer HTML: {outer_html}")
             # Submit the form (try common button types)
             try:
-                login_button = driver.find_element(By.XPATH, '//button[@type="submit" or @value="Login" or @value="Sign in"]')
+                login_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
+    (By.XPATH, '//input[@type="submit" or @value="Login" or @value="Sign In"] | '
+               '//button[@type="submit" or contains(text(), "Sign In") or contains(text(), "Login")]')
+))
+
                 login_button.click()
             except:
                 print("Could not find a submit button.")
