@@ -332,7 +332,7 @@ def capture_network_traffic(driver):
 
         # Call save_to_db
         #save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
-
+'''
 # Load IPs from a file
 def load_ips_from_file(filename):
     with open(filename, 'r') as file:
@@ -342,6 +342,7 @@ def load_ips_from_file(filename):
 # Visit each IP from the .txt file
 ip_list = load_ips_from_file('reachable_ips.txt')  # Make sure to replace with the actual path of your IP file
 # Function to generate a list of sequential IP addresses and store them in a set
+'''
 
 def generate_ip_list(count):
     ip_set = set()
