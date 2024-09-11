@@ -70,7 +70,8 @@ def find_internal_links(driver, base_url):
     internal_links = []
     for link in links:
         href = link.get_attribute('href')
-        if href and urlparse(href).netloc == urlparse(base_url).netloc:
+        link_text = link.text
+        if href and urlparse(href).netloc == urlparse(base_url).netloc and ("Log In" in link_text or "Sign In" in link_text):
             internal_links.append(href)
     return internal_links
 
@@ -171,17 +172,17 @@ def capture_network_traffic(driver):
         else:
             print("Response body: No data captured")
         
-        # Extract parameters for save_to_db
-    req_method = 'POST'
-    req_path = urlparse(url).path
-    req_headers = {}  # Assuming headers are not captured in this snippet
-    req_body = data['data']
-    res_status = data['response']['status']
-    res_headers = {}  # Assuming headers are not captured in this snippet
-    res_body = data['response']['body']
+            # Extract parameters for save_to_db
+        req_method = 'POST'
+        req_path = urlparse(url).path
+        req_headers = {}  # Assuming headers are not captured in this snippet
+        req_body = data['data']
+        res_status = data['response']['status']
+        res_headers = {}  # Assuming headers are not captured in this snippet
+        res_body = data['response']['body']
 
-    # Call save_to_db
-    save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
+        # Call save_to_db
+        save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
 
 # Load IPs from a file
 def load_ips_from_file(filename):
@@ -193,7 +194,7 @@ def load_ips_from_file(filename):
 ip_list = load_ips_from_file('reachable_ips.txt')  # Make sure to replace with the actual path of your IP file
 
 for ip in ip_list:
-    target_url = f"https://www.hackthissite.org/"  # Access each IP over HTTP
+    target_url = f"http://{ip}"  # Access each IP over HTTP
 
     print(f"Visiting: {target_url}")
     try:
