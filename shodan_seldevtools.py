@@ -172,7 +172,7 @@ def capture_network_traffic(driver):
         else:
             print("Response body: No data captured")
         
-            # Extract parameters for save_to_db
+        # Extract parameters for save_to_db
         req_method = 'POST'
         req_path = urlparse(url).path
         req_headers = {}  # Assuming headers are not captured in this snippet
@@ -194,7 +194,7 @@ def load_ips_from_file(filename):
 ip_list = load_ips_from_file('reachable_ips.txt')  # Make sure to replace with the actual path of your IP file
 
 for ip in ip_list:
-    target_url = f"http://{ip}"  # Access each IP over HTTP
+    target_url = f"https://www.hackthissite.org/user/login"  # Access each IP over HTTP
 
     print(f"Visiting: {target_url}")
     try:
