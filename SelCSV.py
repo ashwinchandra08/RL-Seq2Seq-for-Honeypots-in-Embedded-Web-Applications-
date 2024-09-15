@@ -24,7 +24,7 @@ db_connection = mysql.connector.connect(
     host='127.0.0.1',
     user='root',
     password=os.getenv('MYSQL_PASSWORD'),
-    database='pes'
+    database='honeypotdb'
 )
 
 #Create a cursor object using the cursor() method
@@ -276,22 +276,6 @@ def capture_network_traffic(driver):
             # Save to database
             save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
 
-
-
-        # Call save_to_db
-        #save_to_db(req_method, req_path, req_headers, req_body, res_status, res_headers, res_body)
-'''
-# Load IPs from a file
-def load_ips_from_file(filename):
-    with open(filename, 'r') as file:
-        ips = file.readlines()
-    return [ip.strip() for ip in ips]
-
-# Visit each IP from the .txt file
-ip_list = load_ips_from_file('reachable_ips.txt')  # Make sure to replace with the actual path of your IP file
-# Function to generate a list of sequential IP addresses and store them in a set
-'''
-
 def generate_ip_list(count):
     ip_set = set()
     start_ip = (129 << 24)  # Start from 128.0.0.0
@@ -360,7 +344,7 @@ def find_login_page(driver):
     return None, None
 
 def process_ip(ip):
-    target_url = f"https://{ip}"  # Access each IP over HTTPS
+    target_url = f"http://{ip}"  # Access each IP over HTTPS
     print(f"Visiting: {target_url}")
 
     # Initialize a new WebDriver instance (new browser window) for each IP
@@ -420,12 +404,22 @@ def process_ip(ip):
         print(f"Timed out after 30 seconds for {target_url}")
     except Exception as e:
         print(f"Failed to load {target_url}: {e}")
+    except StaleElementReferenceException:
+        driver.refresh()
+        # Re-locate elements and retry the operation
+        login_button = WebDriverWait(driver, 5).until(EC.element_to_be_clickable(
+                        (By.XPATH, '//input[@type="submit" or @value="Login" or @value="Sign In"] | '
+                                   '//button[@type="submit" or contains(text(), "Sign In") or contains(text(), "Login")]')
+                    ))
+        login_button.click()
     finally:
         driver.quit()  # Close the browser window
 
 
+import random 
 def submit_payloads(driver, username_field, password_field):
     """Submits the payloads to the login form."""
+    random.shuffle(attack_payloads)
     for payload in attack_payloads:
         # Clear and enter payloads into login form
         username_field.clear()
