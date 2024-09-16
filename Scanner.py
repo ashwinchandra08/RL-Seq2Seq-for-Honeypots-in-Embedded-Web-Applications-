@@ -204,8 +204,7 @@ def process_ip(ip):
         # Allow time for the base page to load
         time.sleep(5)
 
-        #Perform GET attacks
-        perform_get_attacks(driver, target_url)
+        
 
         # Step 1: Check if the base URL itself is a login page
         username_field, password_field = find_login_elements(driver)
