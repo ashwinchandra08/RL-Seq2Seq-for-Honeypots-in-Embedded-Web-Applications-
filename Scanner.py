@@ -28,6 +28,7 @@ chrome_options = Options()
 chrome_options.add_argument("--start-maximized")  # Open browser in maximized mode
 chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
 chrome_options.add_argument('--ignore-certificate-errors')
+chrome_options.add_argument("--lang=en")
 
 # Specify the path to chromedriver
 chromedriver_path = os.getenv('CHROMEDRIVER_PATH')  # Replace with your chromedriver path
@@ -146,23 +147,6 @@ def navigate_to_login_page(driver, base_url):
     return None, None
 
 
-def generate_ip_list(count):
-    ip_set = set()
-    start_ip = (129 << 24)  # Start from 128.0.0.0
-    for i in range(start_ip, start_ip + count):
-        # Calculate each octet
-        octet1 = (i >> 24) & 0xFF
-        octet2 = (i >> 16) & 0xFF
-        octet3 = (i >> 8) & 0xFF
-        octet4 = i & 0xFF
-        ip_set.add(f"{octet1}.{octet2}.{octet3}.{octet4}")
-    return ip_set
-
-# Generate a set of 10 sequential IP addresses (you can adjust the count)
-ip_set = generate_ip_list(500)
-ip_list = list(ip_set)
-
-
 def find_login_page(driver):
     login_button_xpaths = [
         '//a[contains(text(), "Login") or contains(text(), "Sign In") or contains(text(), "login")]',
@@ -267,7 +251,29 @@ def process_ip(ip):
         driver.quit()  # Close the browser window
 
 
-# Process each IP address
+def generate_ip_list(count):
+    ip_set = set()
+    start_ip = (130 << 24)  # Start from 130.0.0.0
+    for i in range(start_ip, start_ip + count):
+        # Calculate each octet
+        octet1 = (i >> 24) & 0xFF
+        octet2 = (i >> 16) & 0xFF
+        octet3 = (i >> 8) & 0xFF
+        octet4 = i & 0xFF
+        ip_set.add(f"{octet1}.{octet2}.{octet3}.{octet4}")
+    return ip_set
+
+# Generate a set of 10 sequential IP addresses (you can adjust the count)
+ip_set = generate_ip_list(1000)
+ip_list = list(ip_set)
+
+# Traverse through the ip_list and process each IP
+for ip in ip_list:
+    process_ip(ip)
+    time.sleep(20)  # Add a delay if needed to avoid overwhelming the network or server
+
+
+'''
 # Read the CSV file and process each domain
 with open('ranked_domains.csv', newline='') as csvfile:
     reader = csv.DictReader(csvfile)
@@ -275,3 +281,4 @@ with open('ranked_domains.csv', newline='') as csvfile:
         domain = row['Domain']
         process_ip(domain)
         time.sleep(20)
+'''
