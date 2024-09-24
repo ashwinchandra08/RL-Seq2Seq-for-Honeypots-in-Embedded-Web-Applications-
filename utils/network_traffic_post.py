@@ -6,7 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 import time 
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException,NoSuchElementException
-
+from selenium.webdriver.common.keys import Keys 
 
 # Add the parent directory of utils to sys.path
 import sys
@@ -37,8 +37,16 @@ def submit_payloads(driver, username_field, password_field):
                                '//input[@type="submit" or @value="Login" or @value="Sign In"] | '
                                '//button[@id="loginButton"]')
             ))
-            login_button.click()
-            print(f"Payload submitted: {payload}")
+            print(login_button)
+            try:
+                login_button.click()
+                print(f"Payload submitted: {payload}")
+            except:
+                password_field.send_keys(Keys.RETURN)
+
+            
+                print("Submitted credentials via Enter key.")
+                
         except TimeoutException:
             print("Submit button not found.")
         
