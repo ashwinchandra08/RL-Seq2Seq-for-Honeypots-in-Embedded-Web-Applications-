@@ -5,6 +5,7 @@ import json
 import mysql.connector
 import os
 import csv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Function to capture GET request and response and store them in MySQL
 def capture_get_request(url, db_cursor, db_conn):
@@ -82,34 +83,49 @@ def crawl_website(base_url, db_cursor=None, db_conn=None):
         except Exception as e:
             print(f"Error processing {url}: {e}")
 
-# Main function to connect to MySQL and crawl websites from CSV
-def main():
-    # Database connection setup
-    db_conn = mysql.connector.connect(
-        host='127.0.0.1',
-        user='root',
-        password=os.getenv('MYSQL_PASSWORD'),
-        database='web_crawler'
-    )
+# Worker function to be used with ThreadPoolExecutor
+def crawl_website_worker(base_url, db_conn_params):
+    # Create a new database connection for each thread
+    db_conn = mysql.connector.connect(**db_conn_params)
     db_cursor = db_conn.cursor()
+    
+    crawl_website(base_url, db_cursor=db_cursor, db_conn=db_conn)
+    
+    # Close the database connection after crawling
+    db_cursor.close()
+    db_conn.close()
 
-     # Read URLs from a CSV file, with URLs in the "Domain" column
+# Main function to connect to MySQL and crawl websites from CSV (in reverse order) concurrently
+def main():
+    # Database connection parameters
+    db_conn_params = {
+        'host': '127.0.0.1',
+        'user': 'root',
+        'password': os.getenv('MYSQL_PASSWORD'),
+        'database': 'web_crawler'
+    }
+
+    # Read URLs from a CSV file, with URLs in the "Domain" column (using utf-8 encoding)
     with open('GET/majestic_million.csv', newline='', encoding='utf-8') as csvfile:
         csv_reader = csv.DictReader(csvfile)  # Read CSV as a dictionary
         rows = list(csv_reader)  # Load all rows into a list
 
-    # Iterate over the list in reverse order
-    for row in reversed(rows):
-        base_url = row['Domain']  # Assume the URL is in the "Domain" column
-        if not base_url.startswith("http"):  # Ensure the URL has http/https prefix
-            base_url = "https://" + base_url
+    # Using ThreadPoolExecutor for concurrent crawling
+    max_threads = 5  # You can adjust the number of threads
+    with ThreadPoolExecutor(max_workers=max_threads) as executor:
+        # Submit tasks for each URL in reverse order
+        futures = []
+        for row in reversed(rows):
+            base_url = row['Domain']  # Assume the URL is in the "Domain" column
+            if not base_url.startswith("http"):  # Ensure the URL has http/https prefix
+                base_url = "https://" + base_url
 
-        print(f"Starting crawl for {base_url}")
-        crawl_website(base_url, db_cursor=db_cursor, db_conn=db_conn)
+            futures.append(executor.submit(crawl_website_worker, base_url, db_conn_params))
 
-    # Close the database connection
-    db_cursor.close()
-    db_conn.close()
+        # As each task is completed, print its result
+        for future in as_completed(futures):
+            result = future.result()
+            print(f"Crawled: {result}")
 
 if __name__ == "__main__":
     main()
