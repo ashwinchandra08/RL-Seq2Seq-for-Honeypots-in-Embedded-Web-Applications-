@@ -3,7 +3,8 @@ from bs4 import BeautifulSoup
 import urllib.parse
 import json
 import mysql.connector
-import os 
+import os
+import csv
 
 # Function to capture GET request and response and store them in MySQL
 def capture_get_request(url, db_cursor, db_conn):
@@ -33,7 +34,7 @@ def capture_get_request(url, db_cursor, db_conn):
             request_id,
             response.status_code,
             json.dumps(dict(response.headers)),  # Convert headers to JSON string
-            response.text # Limit response body size to 500 chars for simplicity
+            response.text  # Store the entire response body
         )
         db_cursor.execute(response_query, response_values)
 
@@ -46,12 +47,11 @@ def capture_get_request(url, db_cursor, db_conn):
         return None
 
 # Function to crawl a website and store GET request/response in MySQL
-def crawl_website(base_url, max_links=10, db_cursor=None, db_conn=None):
+def crawl_website(base_url, db_cursor=None, db_conn=None):
     visited = set()
     to_visit = [base_url]
-    link_count = 0
 
-    while to_visit and link_count < max_links:
+    while to_visit:
         url = to_visit.pop(0)
         if url in visited:
             continue
@@ -60,8 +60,6 @@ def crawl_website(base_url, max_links=10, db_cursor=None, db_conn=None):
 
         # Capture the GET request and response for the URL and store in MySQL
         request_data = capture_get_request(url, db_cursor, db_conn)
-        if request_data:
-            link_count += 1
 
         # Mark the URL as visited
         visited.add(url)
@@ -84,20 +82,30 @@ def crawl_website(base_url, max_links=10, db_cursor=None, db_conn=None):
         except Exception as e:
             print(f"Error processing {url}: {e}")
 
-# Main function to connect to MySQL and start the crawl
+# Main function to connect to MySQL and crawl websites from CSV
 def main():
     # Database connection setup
     db_conn = mysql.connector.connect(
-    host='127.0.0.1',
-    user='root',
-    password=os.getenv('MYSQL_PASSWORD'),
-    database='web_crawler'
-)
+        host='127.0.0.1',
+        user='root',
+        password=os.getenv('MYSQL_PASSWORD'),
+        database='web_crawler'
+    )
     db_cursor = db_conn.cursor()
 
-    # Start crawling from the base URL
-    base_url = 'https://www.iana.org/domains'  # Replace with your target URL
-    crawl_website(base_url, max_links=10, db_cursor=db_cursor, db_conn=db_conn)  # Limit to 10 links
+     # Read URLs from a CSV file, with URLs in the "Domain" column
+    with open('GET/majestic_million.csv', newline='', encoding='utf-8') as csvfile:
+        csv_reader = csv.DictReader(csvfile)  # Read CSV as a dictionary
+        rows = list(csv_reader)  # Load all rows into a list
+
+    # Iterate over the list in reverse order
+    for row in reversed(rows):
+        base_url = row['Domain']  # Assume the URL is in the "Domain" column
+        if not base_url.startswith("http"):  # Ensure the URL has http/https prefix
+            base_url = "https://" + base_url
+
+        print(f"Starting crawl for {base_url}")
+        crawl_website(base_url, db_cursor=db_cursor, db_conn=db_conn)
 
     # Close the database connection
     db_cursor.close()
