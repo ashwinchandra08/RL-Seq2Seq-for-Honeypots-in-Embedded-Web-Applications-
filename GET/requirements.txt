@@ -1,3 +1,4 @@
 requests
 beautifulsoup4
 mysql-connector-python
+langdetect==1.0.9

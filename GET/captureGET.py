@@ -6,6 +6,7 @@ import mysql.connector
 import os
 import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from langdetect import detect
 
 # Function to capture GET request and response and store them in MySQL
 def capture_get_request(url, db_cursor, db_conn):
@@ -95,6 +96,23 @@ def crawl_website_worker(base_url, db_conn_params):
     db_cursor.close()
     db_conn.close()
 
+def is_english_page(url):
+    try:
+        # Fetch the content of the page
+        response = requests.get(url)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        text = soup.get_text(strip=True)
+        
+        # Detect language
+        if detect(text) == 'en':  # Replace 'en' with the target language
+            return True
+        else:
+            print(f"Skipping non-English page: {url}")
+            return False
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
+        return False
+
 # Main function to connect to MySQL and crawl websites from CSV (in reverse order) concurrently
 def main():
     # Database connection parameters
@@ -119,8 +137,10 @@ def main():
             base_url = row['Domain']  # Assume the URL is in the "Domain" column
             if not base_url.startswith("http"):  # Ensure the URL has http/https prefix
                 base_url = "https://" + base_url
-
-            futures.append(executor.submit(crawl_website_worker, base_url, db_conn_params))
+            
+            # Check if the page is in English before submitting
+            if is_english_page(base_url):
+                futures.append(executor.submit(crawl_website_worker, base_url, db_conn_params))
 
         # As each task is completed, print its result
         for future in as_completed(futures):
